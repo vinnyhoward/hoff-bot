@@ -1,10 +1,49 @@
 import * as functions from 'firebase-functions';
+import { verifySignature } from './utils';
 
-// // Start writing Firebase Functions
-// // https://firebase.google.com/docs/functions/typescript
-//
-export const hoffBot = functions.https.onRequest((req, res) => {
-    const { challenge } = req.body;
+import { WebClient } from '@slack/web-api';
+const bot = new WebClient(functions.config().slack.token);
 
-    res.send({ challenge });
+const { PubSub } = require('@google-cloud/pubsub');
+const puSubClient = new PubSub();
+
+export const hoffBot = functions.https.onRequest(async (req, res) => {
+    // Validate Signature
+    verifySignature(req); // See snippet above for implementation
+
+    const data = JSON.stringify(req.body);
+    const dataBuffer = Buffer.from(data);
+
+    await puSubClient
+        .topic('slack-channel-join')
+        .publisher()
+        .publish(dataBuffer);
+
+    res.sendStatus(200);
 });
+
+export const slackChanelJoin = functions.pubsub
+    .topic('slack-channel-join')
+    .onPublish(async (message: any) => {
+        const { event } = message.json;
+        const { user, channel } = event;
+        const generalChannel = '#general';
+        const newChannel = '#random';
+
+        if (channel !== generalChannel) {
+            throw Error();
+        }
+
+        const userResult: any = await bot.users.profile.get({ user });
+        const { display_name } = userResult.profile;
+
+        await bot.channels.invite({
+            channel: newChannel,
+            user,
+        });
+
+        await bot.chat.postMessage({
+            channel: newChannel,
+            text: `Sup ${display_name}`,
+        });
+    });
